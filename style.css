@@ -1,0 +1,126 @@
+body {
+  font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  background-color: #f4f6f9;
+  margin: 0;
+  padding: 20px;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+h2 {
+  color: #1f2937;
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+#loading {
+  text-align: center;
+  color: #6b7280;
+}
+
+/* Thẻ tổng cho từng thiết bị */
+.device-card {
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 24px;
+  margin-bottom: 32px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.device-title {
+  margin-top: 0;
+  margin-bottom: 20px;
+  color: #1e40af;
+  font-size: 1.4rem;
+  border-bottom: 2px solid #e5e7eb;
+  padding-bottom: 10px;
+}
+
+.section-block {
+  margin-bottom: 24px;
+}
+
+.section-title {
+  color: #374151;
+  margin-bottom: 12px;
+  font-size: 1.1rem;
+}
+
+.no-data {
+  color: #9ca3af;
+  font-style: italic;
+}
+
+/* Thẻ cuộn ngang khi bảng bị tràn */
+.table-wrapper {
+  overflow-x: auto;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+}
+
+/* --- Bảng Latest (Dạng hàng ngang 2 cột) --- */
+.params-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.params-table th, 
+.params-table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.params-table th {
+  background-color: #f8fafc;
+  color: #475569;
+  font-weight: 600;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+}
+
+.param-name {
+  font-weight: 600;
+  color: #334155;
+  width: 30%;
+}
+
+.param-val {
+  color: #0f172a;
+  font-family: monospace;
+}
+
+/* --- Bảng History (Lịch sử mốc thời gian/bản ghi) --- */
+.history-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  white-space: nowrap; /* Giữ dữ liệu không bị xuống dòng vụn vặt */
+}
+
+.history-table th, 
+.history-table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid #e5e7eb;
+  border-right: 1px solid #f1f5f9;
+  font-size: 0.9rem;
+}
+
+.history-table th {
+  background-color: #eff6ff;
+  color: #1e40af;
+  font-weight: 600;
+}
+
+.history-table tbody tr:hover {
+  background-color: #f8fafc;
+}
+
+.record-key {
+  font-weight: 600;
+  color: #475569;
+  background-color: #f8fafc;
+}
