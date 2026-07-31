@@ -41,25 +41,26 @@ const database = getDatabase(app);
 const dataListEl = document.getElementById("data-list");
 const loadingEl = document.getElementById("loading");
 
-// Danh sách các key rác cần loại bỏ
+// Danh sách các key rác/không sử dụng cần loại bỏ
 const EXCLUDED_KEYS = [
   "dbg_k", "dbg_kd", "dbg_low", "dbg_marker", 
-  "dbg_n", "dbg_p", "dbg_source", "timestamp", "real_timestamp","seq"
+  "dbg_n", "dbg_p", "dbg_source", "timestamp",
+  "real_timestamp", "seq" // Loại bỏ theo yêu cầu
 ];
 
-// Thứ tự cột cố định theo yêu cầu
-const TARGET_COLUMN_ORDER = [
-  "date_time",
-  "device_id",
-  "battery_mv",
-  "sht_humidity",
-  "sht_temperature",
-  "humidity",
-  "temperature",
-  "ph",
-  "nitrogen",
-  "phosphorus",
-  "potassium"
+// Mapping cấu trúc cột: Key trong dữ liệu -> Tên hiển thị (Label)
+const COLUMN_MAPPING = [
+  { key: "date_time", label: "Date time" },
+  { key: "device_id", label: "Device ID" },
+  { key: "battery_mv", label: "Battery mv" },
+  { key: "sht_humidity", label: "Air humidity %" },
+  { key: "sht_temperature", label: "Air temperature °C" },
+  { key: "humidity", label: "Soil humidity %" },
+  { key: "temperature", label: "Soil temperature °C" },
+  { key: "ph", label: "pH" },
+  { key: "nitrogen", label: "Nitrogen mg/Kg" },
+  { key: "phosphorus", label: "Phosphorus mg/Kg" },
+  { key: "potassium", label: "Potassium mg/Kg" }
 ];
 
 const dbRef = ref(database, "devices");
@@ -100,12 +101,12 @@ onValue(dbRef, (snapshot) => {
       if (Object.keys(latestData).length > 0) {
         const processedLatest = processDataObj(latestData);
 
-        // Hiển thị Latest theo thứ tự cột chuẩn
-        TARGET_COLUMN_ORDER.forEach((key) => {
+        // Hiển thị các thuộc tính của Latest theo tên mới
+        COLUMN_MAPPING.forEach(({ key, label }) => {
           if (processedLatest[key] !== undefined) {
             contentHtml += `
               <tr>
-                <td class="param-name">${key}</td>
+                <td class="param-name">${label}</td>
                 <td class="param-val">${formatValue(processedLatest[key])}</td>
               </tr>
             `;
@@ -131,7 +132,7 @@ onValue(dbRef, (snapshot) => {
       let historyKeys = Object.keys(historyData);
 
       if (historyKeys.length > 0) {
-        // Sắp xếp real_timestamp LỚN ĐỨNG ĐẦU BẢNG
+        // Sắp xếp theo real_timestamp LỚN ĐỨNG ĐẦU BẢNG
         historyKeys.sort((a, b) => {
           const tsA = Number(historyData[a]?.real_timestamp) || 0;
           const tsB = Number(historyData[b]?.real_timestamp) || 0;
@@ -143,13 +144,13 @@ onValue(dbRef, (snapshot) => {
             <table class="history-table">
               <thead>
                 <tr>
-                  ${TARGET_COLUMN_ORDER.map(col => `<th>${col}</th>`).join('')}
+                  ${COLUMN_MAPPING.map(col => `<th>${col.label}</th>`).join('')}
                 </tr>
               </thead>
               <tbody>
         `;
 
-        // Render từng bản ghi lịch sử (Không có cột Record Key nữa)
+        // Render từng bản ghi lịch sử
         historyKeys.forEach((recordKey) => {
           const record = historyData[recordKey];
           contentHtml += `<tr>`;
@@ -157,13 +158,13 @@ onValue(dbRef, (snapshot) => {
           if (typeof record === 'object' && record !== null) {
             const processedRecord = processDataObj(record);
 
-            // Duyệt chính xác theo thứ tự mảng TARGET_COLUMN_ORDER
-            TARGET_COLUMN_ORDER.forEach((col) => {
-              const val = processedRecord[col] !== undefined ? processedRecord[col] : '-';
+            // Duyệt danh sách cột theo thứ tự mảng COLUMN_MAPPING
+            COLUMN_MAPPING.forEach(({ key }) => {
+              const val = processedRecord[key] !== undefined ? processedRecord[key] : '-';
               contentHtml += `<td>${formatValue(val)}</td>`;
             });
           } else {
-            contentHtml += `<td colspan="${TARGET_COLUMN_ORDER.length}">${formatValue(record)}</td>`;
+            contentHtml += `<td colspan="${COLUMN_MAPPING.length}">${formatValue(record)}</td>`;
           }
 
           contentHtml += `</tr>`;
@@ -192,7 +193,7 @@ onValue(dbRef, (snapshot) => {
 });
 
 /**
- * Xử lý dữ liệu: Bỏ key rác và tạo date_time từ real_timestamp
+ * Lọc dữ liệu và chuyển đổi real_timestamp thành date_time
  */
 function processDataObj(rawObj) {
   const result = {};
@@ -202,7 +203,7 @@ function processDataObj(rawObj) {
     result[key] = val;
   });
 
-  // Tự động thêm date_time nếu có real_timestamp
+  // Tạo date_time từ real_timestamp trước khi loại bỏ
   if (rawObj.real_timestamp) {
     result["date_time"] = convertTimestampToDate(rawObj.real_timestamp);
   }
@@ -211,7 +212,7 @@ function processDataObj(rawObj) {
 }
 
 /**
- * Chuyển đổi timestamp sang định dạng YYYY-MM-DD HH:mm:ss
+ * Chuyển đổi timestamp sang chuỗi YYYY-MM-DD HH:mm:ss
  */
 function convertTimestampToDate(timestamp) {
   if (!timestamp || isNaN(timestamp)) return "-";
@@ -237,7 +238,7 @@ function convertTimestampToDate(timestamp) {
 }
 
 /**
- * Format giá trị hiển thị
+ * Format giá trị
  */
 function formatValue(value) {
   if (typeof value === 'object' && value !== null) {
