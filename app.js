@@ -46,6 +46,18 @@ const metricsGridEl = document.getElementById("metrics-grid");
 const tableHeadersEl = document.getElementById("table-headers");
 const tableBodyEl = document.getElementById("table-body");
 
+function safeSetHtml(el, html) {
+  if (el) {
+    el.innerHTML = html;
+  }
+}
+
+function safeSetText(el, text) {
+  if (el) {
+    el.textContent = text;
+  }
+}
+
 // Cấu hình các cột & màu sắc tương ứng trên Biểu đồ
 const MAPPING_CONFIG = [
   { key: "date_time", label: "Date time", color: null },
@@ -71,7 +83,9 @@ let chartInstances = [];
 const dbRef = ref(database, "devices");
 
 onValue(dbRef, (snapshot) => {
-  loadingEl.style.display = "none";
+  if (loadingEl) {
+    loadingEl.style.display = "none";
+  }
 
   if (snapshot.exists()) {
     allDevicesData = snapshot.val();
@@ -89,15 +103,16 @@ onValue(dbRef, (snapshot) => {
       renderDeviceDetail(activeDeviceId);
     }
   } else {
-    deviceButtonsEl.innerHTML = "<p>Không tìm thấy thiết bị nào.</p>";
+    safeSetHtml(deviceButtonsEl, "<p>Không tìm thấy thiết bị nào.</p>");
   }
 }, (error) => {
   console.error("Lỗi kết nối Firebase:", error);
-  loadingEl.innerText = "Lỗi tải dữ liệu!";
+  safeSetText(loadingEl, "Lỗi tải dữ liệu!");
 });
 
 // Render danh sách nút bấm chọn thiết bị
 function renderDeviceButtons(deviceIds) {
+  if (!deviceButtonsEl) return;
   deviceButtonsEl.innerHTML = "";
   deviceIds.forEach(id => {
     const btn = document.createElement("button");
@@ -114,8 +129,8 @@ function renderDeviceButtons(deviceIds) {
 
 // Render chi tiết của 1 thiết bị khi nhấp vào
 function renderDeviceDetail(deviceId) {
-  deviceDetailEl.classList.remove("hidden");
-  selectedDeviceNameEl.innerText = `📱 Thiết bị: ${deviceId}`;
+  deviceDetailEl?.classList.remove("hidden");
+  safeSetText(selectedDeviceNameEl, `📱 Thiết bị: ${deviceId}`);
 
   const device = allDevicesData[deviceId];
   const latestData = processDataObj(device.latest || {});
@@ -143,6 +158,7 @@ function renderDeviceDetail(deviceId) {
 
 // Hàm render thẻ chỉ số nhanh
 function renderMetricsCards(latestData) {
+  if (!metricsGridEl) return;
   metricsGridEl.innerHTML = "";
   MAPPING_CONFIG.forEach(({ key, label, color }) => {
     if (latestData[key] !== undefined && key !== "date_time" && key !== "device_id") {
@@ -161,6 +177,7 @@ function renderMetricsCards(latestData) {
 // Hàm vẽ nhiều biểu đồ đường riêng cho từng tham số
 function renderLineCharts(historyRecords) {
   const chartsContainerEl = document.getElementById("charts-container");
+  if (!chartsContainerEl) return;
 
   chartInstances.forEach(chart => chart.destroy());
   chartInstances = [];
@@ -235,6 +252,8 @@ function renderLineCharts(historyRecords) {
 
 // Hàm render Bảng Lịch sử
 function renderHistoryTable(historyRecords) {
+  if (!tableHeadersEl || !tableBodyEl) return;
+
   // Thêm Header
   tableHeadersEl.innerHTML = MAPPING_CONFIG.map(col => `<th>${col.label}</th>`).join('');
 
