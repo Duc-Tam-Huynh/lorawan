@@ -1,18 +1,55 @@
-<!DOCTYPE html>
+<<!DOCTYPE html>
 <html lang="vi">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Quản Lý Thiết Bị Realtime & History</title>
+  <title>IoT Device Dashboard</title>
   <link rel="stylesheet" href="style.css">
+  <!-- Thư viện Chart.js để vẽ biểu đồ -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
 
-  <div class="container">
-    <h2>Dữ Liệu Realtime & Lịch Sử Thiết Bị</h2>
-    <p id="loading">Đang tải dữ liệu từ Firebase...</p>
-    
-    <div id="data-list"></div>
+  <div class="dashboard-container">
+    <header class="header">
+      <h2>🌐 IoT Sensors Dashboard</h2>
+      <p id="loading">Đang kết nối Firebase Realtime Database...</p>
+    </header>
+
+    <!-- Danh sách lựa chọn thiết bị (Device List / Navigation) -->
+    <section class="device-selector">
+      <h3>Danh sách thiết bị:</h3>
+      <div id="device-buttons" class="device-buttons-grid"></div>
+    </section>
+
+    <!-- Màn hình chi tiết của thiết bị được chọn -->
+    <main id="device-detail" class="device-detail hidden">
+      <div class="detail-header">
+        <h3 id="selected-device-name">Thiết bị: --</h3>
+      </div>
+
+      <!-- 1. Thẻ chỉ số mới nhất (Latest Cards) -->
+      <section class="metrics-grid" id="metrics-grid"></section>
+
+      <!-- 2. Biểu đồ thông số (Line Charts) -->
+      <section class="chart-section">
+        <h4>📈 Biểu đồ biến thiên theo thời gian</h4>
+        <div id="charts-container" class="charts-grid"></div>
+      </section>
+
+      <!-- 3. Bảng lịch sử dữ liệu (History Table) -->
+      <section class="history-section">
+        <h4>📜 Lịch sử dữ liệu</h4>
+        <div class="table-wrapper">
+          <table class="history-table">
+            <thead>
+              <tr id="table-headers"></tr>
+            </thead>
+            <tbody id="table-body"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
   </div>
 
   <script type="module" src="app.js"></script>

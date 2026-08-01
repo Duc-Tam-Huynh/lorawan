@@ -34,176 +34,238 @@ const firebaseConfig = {
 //     messagingSenderId: "731216360361",
 //     appId: "1:731216360361:web:f4fde047a3817433a40ab8"
 // };
-
 const app = initializeApp(firebaseConfig);
 const database = getDatabase(app);
 
-const dataListEl = document.getElementById("data-list");
+// DOM Elements
 const loadingEl = document.getElementById("loading");
+const deviceButtonsEl = document.getElementById("device-buttons");
+const deviceDetailEl = document.getElementById("device-detail");
+const selectedDeviceNameEl = document.getElementById("selected-device-name");
+const metricsGridEl = document.getElementById("metrics-grid");
+const tableHeadersEl = document.getElementById("table-headers");
+const tableBodyEl = document.getElementById("table-body");
 
-// Danh sách các key rác/không sử dụng cần loại bỏ
-const EXCLUDED_KEYS = [
-  "dbg_k", "dbg_kd", "dbg_low", "dbg_marker", 
-  "dbg_n", "dbg_p", "dbg_source", "timestamp",
-  "real_timestamp", "seq" // Loại bỏ theo yêu cầu
+// Cấu hình các cột & màu sắc tương ứng trên Biểu đồ
+const MAPPING_CONFIG = [
+  { key: "date_time", label: "Date time", color: null },
+  { key: "device_id", label: "Device ID", color: null },
+  { key: "battery_mv", label: "Battery mv", color: "#ed8936" },
+  { key: "sht_humidity", label: "Air humidity %", color: "#3182ce" },
+  { key: "sht_temperature", label: "Air temperature °C", color: "#e53e3e" },
+  { key: "humidity", label: "Soil humidity %", color: "#00b4d8" },
+  { key: "temperature", label: "Soil temperature °C", color: "#dd6b20" },
+  { key: "ph", label: "pH", color: "#805ad5" },
+  { key: "nitrogen", label: "Nitrogen mg/Kg", color: "#38a169" },
+  { key: "phosphorus", label: "Phosphorus mg/Kg", color: "#d69e2e" },
+  { key: "potassium", label: "Potassium mg/Kg", color: "#319795" }
 ];
 
-// Mapping cấu trúc cột: Key trong dữ liệu -> Tên hiển thị (Label)
-const COLUMN_MAPPING = [
-  { key: "date_time", label: "Date time" },
-  { key: "device_id", label: "Device ID" },
-  { key: "battery_mv", label: "Battery mv" },
-  { key: "sht_humidity", label: "Air humidity %" },
-  { key: "sht_temperature", label: "Air temperature °C" },
-  { key: "humidity", label: "Soil humidity %" },
-  { key: "temperature", label: "Soil temperature °C" },
-  { key: "ph", label: "pH" },
-  { key: "nitrogen", label: "Nitrogen mg/Kg" },
-  { key: "phosphorus", label: "Phosphorus mg/Kg" },
-  { key: "potassium", label: "Potassium mg/Kg" }
-];
+const EXCLUDED_KEYS = ["dbg_k", "dbg_kd", "dbg_low", "dbg_marker", "dbg_n", "dbg_p", "dbg_source", "timestamp", "real_timestamp", "seq"];
 
+let activeDeviceId = null;
+let allDevicesData = {};
+let chartInstances = [];
+
+// Khởi tạo đọc dữ liệu Realtime
 const dbRef = ref(database, "devices");
 
 onValue(dbRef, (snapshot) => {
   loadingEl.style.display = "none";
-  dataListEl.innerHTML = "";
 
   if (snapshot.exists()) {
-    const devices = snapshot.val();
+    allDevicesData = snapshot.val();
+    const deviceIds = Object.keys(allDevicesData);
 
-    Object.keys(devices).forEach((deviceId) => {
-      const deviceData = devices[deviceId];
-      const latestData = deviceData.latest || {};
-      const historyData = deviceData.history || {};
+    // Render danh sách nút bấm chọn Device
+    renderDeviceButtons(deviceIds);
 
-      const deviceCard = document.createElement("div");
-      deviceCard.className = "device-card";
+    // Mặc định chọn thiết bị đầu tiên nếu chưa chọn
+    if (!activeDeviceId && deviceIds.length > 0) {
+      activeDeviceId = deviceIds[0];
+    }
 
-      // 1. Tiêu đề Thiết bị
-      let contentHtml = `<h3 class="device-title">📱 Thiết bị ID: ${latestData.device_id || deviceId}</h3>`;
-
-      // 2. Bảng LATEST (Dữ liệu Mới nhất)
-      contentHtml += `
-        <div class="section-block">
-          <h4 class="section-title">⚡ Dữ liệu Mới nhất (Latest)</h4>
-          <div class="table-wrapper">
-            <table class="params-table">
-              <thead>
-                <tr>
-                  <th>Tham số</th>
-                  <th>Giá trị</th>
-                </tr>
-              </thead>
-              <tbody>
-      `;
-
-      if (Object.keys(latestData).length > 0) {
-        const processedLatest = processDataObj(latestData);
-
-        // Hiển thị các thuộc tính của Latest theo tên mới
-        COLUMN_MAPPING.forEach(({ key, label }) => {
-          if (processedLatest[key] !== undefined) {
-            contentHtml += `
-              <tr>
-                <td class="param-name">${label}</td>
-                <td class="param-val">${formatValue(processedLatest[key])}</td>
-              </tr>
-            `;
-          }
-        });
-      } else {
-        contentHtml += `<tr><td colspan="2">Không có dữ liệu latest.</td></tr>`;
-      }
-
-      contentHtml += `
-              </tbody>
-            </table>
-          </div>
-        </div>
-      `;
-
-      // 3. Bảng HISTORY (Lịch sử)
-      contentHtml += `
-        <div class="section-block">
-          <h4 class="section-title">📜 Lịch sử Dữ liệu (History)</h4>
-      `;
-
-      let historyKeys = Object.keys(historyData);
-
-      if (historyKeys.length > 0) {
-        // Sắp xếp theo real_timestamp LỚN ĐỨNG ĐẦU BẢNG
-        historyKeys.sort((a, b) => {
-          const tsA = Number(historyData[a]?.real_timestamp) || 0;
-          const tsB = Number(historyData[b]?.real_timestamp) || 0;
-          return tsB - tsA;
-        });
-
-        contentHtml += `
-          <div class="table-wrapper">
-            <table class="history-table">
-              <thead>
-                <tr>
-                  ${COLUMN_MAPPING.map(col => `<th>${col.label}</th>`).join('')}
-                </tr>
-              </thead>
-              <tbody>
-        `;
-
-        // Render từng bản ghi lịch sử
-        historyKeys.forEach((recordKey) => {
-          const record = historyData[recordKey];
-          contentHtml += `<tr>`;
-
-          if (typeof record === 'object' && record !== null) {
-            const processedRecord = processDataObj(record);
-
-            // Duyệt danh sách cột theo thứ tự mảng COLUMN_MAPPING
-            COLUMN_MAPPING.forEach(({ key }) => {
-              const val = processedRecord[key] !== undefined ? processedRecord[key] : '-';
-              contentHtml += `<td>${formatValue(val)}</td>`;
-            });
-          } else {
-            contentHtml += `<td colspan="${COLUMN_MAPPING.length}">${formatValue(record)}</td>`;
-          }
-
-          contentHtml += `</tr>`;
-        });
-
-        contentHtml += `
-              </tbody>
-            </table>
-          </div>
-        `;
-      } else {
-        contentHtml += `<p class="no-data">Không có lịch sử dữ liệu.</p>`;
-      }
-
-      contentHtml += `</div>`;
-
-      deviceCard.innerHTML = contentHtml;
-      dataListEl.appendChild(deviceCard);
-    });
+    if (activeDeviceId && allDevicesData[activeDeviceId]) {
+      renderDeviceDetail(activeDeviceId);
+    }
   } else {
-    dataListEl.innerHTML = "<p>Không tìm thấy dữ liệu thiết bị nào.</p>";
+    deviceButtonsEl.innerHTML = "<p>Không tìm thấy thiết bị nào.</p>";
   }
 }, (error) => {
   console.error("Lỗi kết nối Firebase:", error);
-  loadingEl.innerText = "Lỗi khi tải dữ liệu!";
+  loadingEl.innerText = "Lỗi tải dữ liệu!";
 });
 
-/**
- * Lọc dữ liệu và chuyển đổi real_timestamp thành date_time
- */
+// Render danh sách nút bấm chọn thiết bị
+function renderDeviceButtons(deviceIds) {
+  deviceButtonsEl.innerHTML = "";
+  deviceIds.forEach(id => {
+    const btn = document.createElement("button");
+    btn.className = `device-btn ${id === activeDeviceId ? 'active' : ''}`;
+    btn.innerText = `📱 Device: ${id}`;
+    btn.onclick = () => {
+      activeDeviceId = id;
+      renderDeviceButtons(deviceIds);
+      renderDeviceDetail(id);
+    };
+    deviceButtonsEl.appendChild(btn);
+  });
+}
+
+// Render chi tiết của 1 thiết bị khi nhấp vào
+function renderDeviceDetail(deviceId) {
+  deviceDetailEl.classList.remove("hidden");
+  selectedDeviceNameEl.innerText = `📱 Thiết bị: ${deviceId}`;
+
+  const device = allDevicesData[deviceId];
+  const latestData = processDataObj(device.latest || {});
+  const historyData = device.history || {};
+
+  // 1. Render Metrics Cards (Latest)
+  renderMetricsCards(latestData);
+
+  // 2. Chuẩn bị dữ liệu History & Sắp xếp theo real_timestamp LỚN ĐỨNG ĐẦU BẢNG
+  let historyKeys = Object.keys(historyData);
+  historyKeys.sort((a, b) => {
+    const tsA = Number(historyData[a]?.real_timestamp) || 0;
+    const tsB = Number(historyData[b]?.real_timestamp) || 0;
+    return tsB - tsA;
+  });
+
+  const processedHistoryRecords = historyKeys.map(key => processDataObj(historyData[key]));
+
+  // 3. Render các Biểu đồ Line Chart riêng cho từng tham số
+  renderLineCharts(processedHistoryRecords);
+
+  // 4. Render Bảng Lịch sử
+  renderHistoryTable(processedHistoryRecords);
+}
+
+// Hàm render thẻ chỉ số nhanh
+function renderMetricsCards(latestData) {
+  metricsGridEl.innerHTML = "";
+  MAPPING_CONFIG.forEach(({ key, label, color }) => {
+    if (latestData[key] !== undefined && key !== "date_time" && key !== "device_id") {
+      const card = document.createElement("div");
+      card.className = "metric-card";
+      if (color) card.style.borderLeftColor = color;
+      card.innerHTML = `
+        <div class="title">${label}</div>
+        <div class="value">${latestData[key]}</div>
+      `;
+      metricsGridEl.appendChild(card);
+    }
+  });
+}
+
+// Hàm vẽ nhiều biểu đồ đường riêng cho từng tham số
+function renderLineCharts(historyRecords) {
+  const chartsContainerEl = document.getElementById("charts-container");
+
+  chartInstances.forEach(chart => chart.destroy());
+  chartInstances = [];
+  chartsContainerEl.innerHTML = "";
+
+  // Đảo ngược mảng historyRecords để biểu đồ vẽ mốc thời gian từ Cũ -> Mới (Tải từ trái sang phải)
+  const chartDataRecords = [...historyRecords].reverse();
+  const labels = chartDataRecords.map(item => item.date_time || "-");
+
+  const metricConfigs = MAPPING_CONFIG.filter(config => config.color !== null);
+
+  metricConfigs.forEach(config => {
+    const card = document.createElement("div");
+    card.className = "chart-card";
+    card.innerHTML = `
+      <h5>${config.label}</h5>
+      <div class="chart-container">
+        <canvas></canvas>
+      </div>
+    `;
+
+    const canvas = card.querySelector("canvas");
+    const ctx = canvas.getContext("2d");
+
+    const chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: config.label,
+          data: chartDataRecords.map(item => item[config.key] !== undefined ? item[config.key] : null),
+          borderColor: config.color,
+          backgroundColor: config.color,
+          tension: 0.28,
+          fill: false,
+          pointRadius: 0.4,
+          borderWidth: 2.2
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: {
+          mode: 'index',
+          intersect: false,
+        },
+        plugins: {
+          legend: {
+            display: false
+          },
+          tooltip: {
+            callbacks: {
+              title: (items) => `Thời gian: ${items[0].label}`
+            }
+          }
+        },
+        scales: {
+          x: {
+            title: { display: true, text: 'Thời gian' }
+          },
+          y: {
+            title: { display: true, text: config.label }
+          }
+        }
+      }
+    });
+
+    chartInstances.push(chart);
+    chartsContainerEl.appendChild(card);
+  });
+}
+
+// Hàm render Bảng Lịch sử
+function renderHistoryTable(historyRecords) {
+  // Thêm Header
+  tableHeadersEl.innerHTML = MAPPING_CONFIG.map(col => `<th>${col.label}</th>`).join('');
+
+  // Thêm Body
+  tableBodyEl.innerHTML = "";
+  if (historyRecords.length === 0) {
+    tableBodyEl.innerHTML = `<tr><td colspan="${MAPPING_CONFIG.length}">Không có dữ liệu lịch sử</td></tr>`;
+    return;
+  }
+
+  historyRecords.forEach(record => {
+    const tr = document.createElement("tr");
+    MAPPING_CONFIG.forEach(({ key }) => {
+      const val = record[key] !== undefined ? record[key] : '-';
+      tr.innerHTML += `<td>${val}</td>`;
+    });
+    tableBodyEl.appendChild(tr);
+  });
+}
+
+// Hàm hỗ trợ lọc dữ liệu và chuyển đổi timestamp
 function processDataObj(rawObj) {
+  if (typeof rawObj !== 'object' || rawObj === null) return {};
   const result = {};
 
   Object.entries(rawObj).forEach(([key, val]) => {
-    if (EXCLUDED_KEYS.includes(key)) return;
-    result[key] = val;
+    if (!EXCLUDED_KEYS.includes(key)) {
+      result[key] = val;
+    }
   });
 
-  // Tạo date_time từ real_timestamp trước khi loại bỏ
   if (rawObj.real_timestamp) {
     result["date_time"] = convertTimestampToDate(rawObj.real_timestamp);
   }
@@ -211,38 +273,14 @@ function processDataObj(rawObj) {
   return result;
 }
 
-/**
- * Chuyển đổi timestamp sang chuỗi YYYY-MM-DD HH:mm:ss
- */
 function convertTimestampToDate(timestamp) {
   if (!timestamp || isNaN(timestamp)) return "-";
-
   let ts = Number(timestamp);
-  if (ts < 10000000000) {
-    ts *= 1000;
-  }
+  if (ts < 10000000000) ts *= 1000;
 
   const date = new Date(ts);
   if (isNaN(date.getTime())) return "-";
 
   const pad = (n) => n.toString().padStart(2, '0');
-  
-  const year = date.getFullYear();
-  const month = pad(date.getMonth() + 1);
-  const day = pad(date.getDate());
-  const hours = pad(date.getHours());
-  const minutes = pad(date.getMinutes());
-  const seconds = pad(date.getSeconds());
-
-  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
-}
-
-/**
- * Format giá trị
- */
-function formatValue(value) {
-  if (typeof value === 'object' && value !== null) {
-    return JSON.stringify(value);
-  }
-  return value;
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;//:${pad(date.getSeconds())}`;
 }
