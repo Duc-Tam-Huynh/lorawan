@@ -93,7 +93,7 @@ let rafId = null;
 let prevContainerEl = null;
 const BUFFER_ROWS = 8;
 const RENDER_DEBOUNCE_MS = 180;
-const MAX_CHART_POINTS = 80;
+const MAX_CHART_POINTS = 1000;
 
 // Khởi tạo đọc dữ liệu Realtime
 const dbRef = ref(database, "devices");
@@ -195,7 +195,7 @@ function renderDeviceDetail(deviceId) {
   const processedHistoryRecords = historyKeys.map(key => processDataObj(historyData[key]));
 
   // 3. Render các Biểu đồ Line Chart riêng cho từng tham số
-  const chartHistoryRecords = processedHistoryRecords.slice(-MAX_CHART_POINTS);
+  const chartHistoryRecords = getChartWindowRecords(processedHistoryRecords).slice(0, MAX_CHART_POINTS);
   renderLineCharts(chartHistoryRecords, deviceId);
 
   // 4. Render Bảng Lịch sử
@@ -226,7 +226,8 @@ function renderLineCharts(historyRecords, deviceId) {
   if (!chartsContainerEl) return;
 
   const metricConfigs = MAPPING_CONFIG.filter(config => config.color !== null);
-  const labels = [...historyRecords].reverse().map(item => item.date_time || "-");
+  const chartDataRecords = [...historyRecords].reverse();
+  const labels = chartDataRecords.map(item => item.date_time || "-");
   const shouldRecreate = lastChartDeviceId !== deviceId || chartInstances.length !== metricConfigs.length;
 
   if (shouldRecreate) {
@@ -260,7 +261,7 @@ function renderLineCharts(historyRecords, deviceId) {
           labels,
           datasets: [{
             label: config.label,
-            data: [...historyRecords].reverse().map(item => item[config.key] !== undefined ? item[config.key] : null),
+            data: chartDataRecords.map(item => item[config.key] !== undefined ? item[config.key] : null),
             borderColor: config.color,
             backgroundColor: config.color,
             tension: 0.28,
@@ -303,7 +304,7 @@ function renderLineCharts(historyRecords, deviceId) {
       const chart = chartInstances[index];
       chart.data.labels = labels;
       chart.data.datasets[0].label = config.label;
-      chart.data.datasets[0].data = [...historyRecords].reverse().map(item => item[config.key] !== undefined ? item[config.key] : null);
+      chart.data.datasets[0].data = chartDataRecords.map(item => item[config.key] !== undefined ? item[config.key] : null);
       chart.data.datasets[0].borderColor = config.color;
       chart.data.datasets[0].backgroundColor = config.color;
       chart.update('none');
@@ -459,6 +460,27 @@ function processDataObj(rawObj) {
   }
 
   return result;
+}
+
+function getChartWindowRecords(records) {
+  if (!Array.isArray(records) || records.length === 0) return [];
+
+  const referenceRecord = records[0];
+  const referenceDate = referenceRecord.date_time;
+
+  if (!referenceDate) return records;
+
+  const [year, month, day] = referenceDate.split(" ")[0].split("-").map(Number);
+  const reference = new Date(year, month - 1, day);
+  const startDate = new Date(reference);
+  startDate.setDate(reference.getDate() - 2);
+
+  return records.filter(record => {
+    if (!record?.date_time) return false;
+    const [recordYear, recordMonth, recordDay] = record.date_time.split(" ")[0].split("-").map(Number);
+    const recordDate = new Date(recordYear, recordMonth - 1, recordDay);
+    return recordDate >= startDate && recordDate <= reference;
+  });
 }
 
 function convertTimestampToDate(timestamp) {
