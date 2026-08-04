@@ -34,7 +34,6 @@ const firebaseConfig = {
 //     messagingSenderId: "731216360361",
 //     appId: "1:731216360361:web:f4fde047a3817433a40ab8"
 // };
-
 const app = initializeApp(firebaseConfig);
 const database = getDatabase(app);
 
@@ -79,6 +78,11 @@ const EXCLUDED_KEYS = ["dbg_k", "dbg_kd", "dbg_low", "dbg_marker", "dbg_n", "dbg
 let activeDeviceId = null;
 let allDevicesData = {};
 let chartInstances = [];
+let lastRenderedDeviceIds = null;
+let lastRenderedActiveDeviceId = null;
+let lastChartDeviceId = null;
+let renderDebounceTimer = null;
+let pendingRenderDeviceId = null;
 // Virtual scroll state for history table
 let historyRecordsCache = [];
 let rowHeight = null;
@@ -87,7 +91,9 @@ let visibleEnd = 0;
 let containerEl = null;
 let rafId = null;
 let prevContainerEl = null;
-const BUFFER_ROWS = 10;
+const BUFFER_ROWS = 8;
+const RENDER_DEBOUNCE_MS = 180;
+const MAX_CHART_POINTS = 80;
 
 // Khởi tạo đọc dữ liệu Realtime
 const dbRef = ref(database, "devices");
@@ -99,30 +105,57 @@ onValue(dbRef, (snapshot) => {
 
   if (snapshot.exists()) {
     allDevicesData = snapshot.val();
-    const deviceIds = Object.keys(allDevicesData);
+    const deviceIds = Object.keys(allDevicesData).sort();
 
     // Render danh sách nút bấm chọn Device
     renderDeviceButtons(deviceIds);
 
     // Mặc định chọn thiết bị đầu tiên nếu chưa chọn
-    if (!activeDeviceId && deviceIds.length > 0) {
-      activeDeviceId = deviceIds[0];
+    if (!activeDeviceId || !deviceIds.includes(activeDeviceId)) {
+      activeDeviceId = deviceIds[0] || null;
     }
 
     if (activeDeviceId && allDevicesData[activeDeviceId]) {
-      renderDeviceDetail(activeDeviceId);
+      scheduleRenderDeviceDetail(activeDeviceId);
     }
   } else {
     safeSetHtml(deviceButtonsEl, "<p>Không tìm thấy thiết bị nào.</p>");
+    deviceDetailEl?.classList.add("hidden");
   }
 }, (error) => {
   console.error("Lỗi kết nối Firebase:", error);
   safeSetText(loadingEl, "Lỗi tải dữ liệu!");
 });
 
+function scheduleRenderDeviceDetail(deviceId) {
+  pendingRenderDeviceId = deviceId;
+  if (renderDebounceTimer) {
+    clearTimeout(renderDebounceTimer);
+  }
+
+  renderDebounceTimer = window.setTimeout(() => {
+    renderDebounceTimer = null;
+    const targetDeviceId = pendingRenderDeviceId;
+    if (!targetDeviceId || !allDevicesData[targetDeviceId]) return;
+    renderDeviceDetail(targetDeviceId);
+  }, RENDER_DEBOUNCE_MS);
+}
+
 // Render danh sách nút bấm chọn thiết bị
 function renderDeviceButtons(deviceIds) {
   if (!deviceButtonsEl) return;
+
+  const sameList = lastRenderedDeviceIds &&
+    lastRenderedDeviceIds.length === deviceIds.length &&
+    lastRenderedDeviceIds.every((id, index) => id === deviceIds[index]);
+
+  if (sameList && lastRenderedActiveDeviceId === activeDeviceId) {
+    return;
+  }
+
+  lastRenderedDeviceIds = deviceIds;
+  lastRenderedActiveDeviceId = activeDeviceId;
+
   deviceButtonsEl.innerHTML = "";
   deviceIds.forEach(id => {
     const btn = document.createElement("button");
@@ -131,7 +164,7 @@ function renderDeviceButtons(deviceIds) {
     btn.onclick = () => {
       activeDeviceId = id;
       renderDeviceButtons(deviceIds);
-      renderDeviceDetail(id);
+      scheduleRenderDeviceDetail(id);
     };
     deviceButtonsEl.appendChild(btn);
   });
@@ -139,6 +172,8 @@ function renderDeviceButtons(deviceIds) {
 
 // Render chi tiết của 1 thiết bị khi nhấp vào
 function renderDeviceDetail(deviceId) {
+  if (!deviceId || !allDevicesData?.[deviceId]) return;
+
   deviceDetailEl?.classList.remove("hidden");
   safeSetText(selectedDeviceNameEl, `📱 Thiết bị: ${deviceId}`);
 
@@ -160,7 +195,8 @@ function renderDeviceDetail(deviceId) {
   const processedHistoryRecords = historyKeys.map(key => processDataObj(historyData[key]));
 
   // 3. Render các Biểu đồ Line Chart riêng cho từng tham số
-  renderLineCharts(processedHistoryRecords);
+  const chartHistoryRecords = processedHistoryRecords.slice(-MAX_CHART_POINTS);
+  renderLineCharts(chartHistoryRecords, deviceId);
 
   // 4. Render Bảng Lịch sử
   renderHistoryTable(processedHistoryRecords);
@@ -185,78 +221,93 @@ function renderMetricsCards(latestData) {
 }
 
 // Hàm vẽ nhiều biểu đồ đường riêng cho từng tham số
-function renderLineCharts(historyRecords) {
+function renderLineCharts(historyRecords, deviceId) {
   const chartsContainerEl = document.getElementById("charts-container");
   if (!chartsContainerEl) return;
 
-  chartInstances.forEach(chart => chart.destroy());
-  chartInstances = [];
-  chartsContainerEl.innerHTML = "";
-
-  // Đảo ngược mảng historyRecords để biểu đồ vẽ mốc thời gian từ Cũ -> Mới (Tải từ trái sang phải)
-  const chartDataRecords = [...historyRecords].reverse();
-  const labels = chartDataRecords.map(item => item.date_time || "-");
-
   const metricConfigs = MAPPING_CONFIG.filter(config => config.color !== null);
+  const labels = [...historyRecords].reverse().map(item => item.date_time || "-");
+  const shouldRecreate = lastChartDeviceId !== deviceId || chartInstances.length !== metricConfigs.length;
 
-  metricConfigs.forEach(config => {
-    const card = document.createElement("div");
-    card.className = "chart-card";
-    card.innerHTML = `
-      <h5>${config.label}</h5>
-      <div class="chart-container">
-        <canvas></canvas>
-      </div>
-    `;
+  if (shouldRecreate) {
+    chartInstances.forEach(chart => chart?.destroy());
+    chartInstances = [];
+    chartsContainerEl.innerHTML = "";
+    lastChartDeviceId = deviceId;
+  }
+
+  metricConfigs.forEach((config, index) => {
+    let card = chartsContainerEl.children[index];
+    if (!card) {
+      card = document.createElement("div");
+      card.className = "chart-card";
+      card.innerHTML = `
+        <h5>${config.label}</h5>
+        <div class="chart-container">
+          <canvas></canvas>
+        </div>
+      `;
+      chartsContainerEl.appendChild(card);
+    }
 
     const canvas = card.querySelector("canvas");
     const ctx = canvas.getContext("2d");
 
-    const chart = new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels: labels,
-        datasets: [{
-          label: config.label,
-          data: chartDataRecords.map(item => item[config.key] !== undefined ? item[config.key] : null),
-          borderColor: config.color,
-          backgroundColor: config.color,
-          tension: 0.28,
-          fill: false,
-          pointRadius: 0.4,
-          borderWidth: 2.2
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        interaction: {
-          mode: 'index',
-          intersect: false,
+    if (!chartInstances[index]) {
+      const chart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{
+            label: config.label,
+            data: [...historyRecords].reverse().map(item => item[config.key] !== undefined ? item[config.key] : null),
+            borderColor: config.color,
+            backgroundColor: config.color,
+            tension: 0.28,
+            fill: false,
+            pointRadius: 0.4,
+            borderWidth: 2.2
+          }]
         },
-        plugins: {
-          legend: {
-            display: false
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          interaction: {
+            mode: 'index',
+            intersect: false,
           },
-          tooltip: {
-            callbacks: {
-              title: (items) => `Thời gian: ${items[0].label}`
+          plugins: {
+            legend: {
+              display: false
+            },
+            tooltip: {
+              callbacks: {
+                title: (items) => `Thời gian: ${items[0].label}`
+              }
+            }
+          },
+          scales: {
+            x: {
+              title: { display: true, text: 'Thời gian' }
+            },
+            y: {
+              title: { display: true, text: config.label }
             }
           }
-        },
-        scales: {
-          x: {
-            title: { display: true, text: 'Thời gian' }
-          },
-          y: {
-            title: { display: true, text: config.label }
-          }
         }
-      }
-    });
+      });
 
-    chartInstances.push(chart);
-    chartsContainerEl.appendChild(card);
+      chartInstances[index] = chart;
+    } else {
+      const chart = chartInstances[index];
+      chart.data.labels = labels;
+      chart.data.datasets[0].label = config.label;
+      chart.data.datasets[0].data = [...historyRecords].reverse().map(item => item[config.key] !== undefined ? item[config.key] : null);
+      chart.data.datasets[0].borderColor = config.color;
+      chart.data.datasets[0].backgroundColor = config.color;
+      chart.update('none');
+    }
   });
 }
 
@@ -389,8 +440,7 @@ function renderVisibleRows() {
   bottomTr.appendChild(bottomTd);
   fragment.appendChild(bottomTr);
 
-  tableBodyEl.innerHTML = '';
-  tableBodyEl.appendChild(fragment);
+  tableBodyEl.replaceChildren(fragment);
 }
 
 // Hàm hỗ trợ lọc dữ liệu và chuyển đổi timestamp
