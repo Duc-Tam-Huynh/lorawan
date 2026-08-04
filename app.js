@@ -34,6 +34,7 @@ const firebaseConfig = {
 //     messagingSenderId: "731216360361",
 //     appId: "1:731216360361:web:f4fde047a3817433a40ab8"
 // };
+
 const app = initializeApp(firebaseConfig);
 const database = getDatabase(app);
 
@@ -78,6 +79,15 @@ const EXCLUDED_KEYS = ["dbg_k", "dbg_kd", "dbg_low", "dbg_marker", "dbg_n", "dbg
 let activeDeviceId = null;
 let allDevicesData = {};
 let chartInstances = [];
+// Virtual scroll state for history table
+let historyRecordsCache = [];
+let rowHeight = null;
+let visibleStart = 0;
+let visibleEnd = 0;
+let containerEl = null;
+let rafId = null;
+let prevContainerEl = null;
+const BUFFER_ROWS = 10;
 
 // Khởi tạo đọc dữ liệu Realtime
 const dbRef = ref(database, "devices");
@@ -253,25 +263,134 @@ function renderLineCharts(historyRecords) {
 // Hàm render Bảng Lịch sử
 function renderHistoryTable(historyRecords) {
   if (!tableHeadersEl || !tableBodyEl) return;
+  // Lưu cache
+  historyRecordsCache = historyRecords || [];
 
   // Thêm Header
   tableHeadersEl.innerHTML = MAPPING_CONFIG.map(col => `<th>${col.label}</th>`).join('');
 
-  // Thêm Body
-  tableBodyEl.innerHTML = "";
-  if (historyRecords.length === 0) {
+  // Nếu không có dữ liệu thì hiển thị thông báo và dọn listeners
+  if (historyRecordsCache.length === 0) {
+    detachVirtualScroll();
     tableBodyEl.innerHTML = `<tr><td colspan="${MAPPING_CONFIG.length}">Không có dữ liệu lịch sử</td></tr>`;
     return;
   }
 
-  historyRecords.forEach(record => {
-    const tr = document.createElement("tr");
-    MAPPING_CONFIG.forEach(({ key }) => {
-      const val = record[key] !== undefined ? record[key] : '-';
-      tr.innerHTML += `<td>${val}</td>`;
-    });
-    tableBodyEl.appendChild(tr);
+  // Thiết lập container và listeners nếu cần
+  containerEl = tableBodyEl.closest('.table-wrapper');
+  if (containerEl !== prevContainerEl) {
+    detachVirtualScroll();
+    attachVirtualScroll(containerEl);
+    prevContainerEl = containerEl;
+  }
+
+  // Đo rowHeight nếu chưa có
+  measureRowHeightIfNeeded();
+
+  // Render lần đầu
+  renderVisibleRows();
+}
+
+function measureRowHeightIfNeeded() {
+  if (rowHeight) return;
+  if (!tableBodyEl) return;
+  const tr = document.createElement('tr');
+  MAPPING_CONFIG.forEach(() => {
+    const td = document.createElement('td');
+    td.textContent = '-';
+    tr.appendChild(td);
   });
+  tr.style.visibility = 'hidden';
+  tableBodyEl.appendChild(tr);
+  rowHeight = tr.offsetHeight || 36;
+  tr.remove();
+}
+
+function attachVirtualScroll(container) {
+  if (!container) return;
+  const onScroll = () => {
+    if (rafId) cancelAnimationFrame(rafId);
+    rafId = requestAnimationFrame(renderVisibleRows);
+  };
+  const onResize = () => {
+    measureRowHeightIfNeeded();
+    if (rafId) cancelAnimationFrame(rafId);
+    rafId = requestAnimationFrame(renderVisibleRows);
+  };
+  container.addEventListener('scroll', onScroll);
+  window.addEventListener('resize', onResize);
+  // store handlers on element for later removal
+  container._virtualHandlers = { onScroll, onResize };
+}
+
+function detachVirtualScroll() {
+  if (!prevContainerEl) return;
+  const handlers = prevContainerEl._virtualHandlers;
+  if (handlers) {
+    prevContainerEl.removeEventListener('scroll', handlers.onScroll);
+    window.removeEventListener('resize', handlers.onResize);
+    delete prevContainerEl._virtualHandlers;
+  }
+  prevContainerEl = null;
+  if (rafId) cancelAnimationFrame(rafId);
+  rafId = null;
+}
+
+function renderVisibleRows() {
+  if (!tableBodyEl || !containerEl) return;
+  const total = historyRecordsCache.length;
+  if (total === 0) return;
+
+  const containerHeight = containerEl.clientHeight;
+  measureRowHeightIfNeeded();
+  const rowsPerView = Math.max(1, Math.ceil(containerHeight / rowHeight));
+  const scrollTop = containerEl.scrollTop;
+  let start = Math.floor(scrollTop / rowHeight) - BUFFER_ROWS;
+  if (start < 0) start = 0;
+  let end = Math.min(total, start + rowsPerView + BUFFER_ROWS * 2);
+
+  // If visible range unchanged, do nothing
+  if (start === visibleStart && end === visibleEnd) return;
+
+  visibleStart = start;
+  visibleEnd = end;
+
+  const fragment = document.createDocumentFragment();
+
+  // top spacer
+  const topTr = document.createElement('tr');
+  const topTd = document.createElement('td');
+  topTd.colSpan = MAPPING_CONFIG.length;
+  topTd.style.padding = '0';
+  topTd.style.border = 'none';
+  topTd.style.height = `${start * rowHeight}px`;
+  topTr.appendChild(topTd);
+  fragment.appendChild(topTr);
+
+  // visible rows
+  for (let i = start; i < end; i++) {
+    const record = historyRecordsCache[i];
+    const tr = document.createElement('tr');
+    MAPPING_CONFIG.forEach(({ key }) => {
+      const td = document.createElement('td');
+      td.textContent = record[key] !== undefined ? record[key] : '-';
+      tr.appendChild(td);
+    });
+    fragment.appendChild(tr);
+  }
+
+  // bottom spacer
+  const bottomTr = document.createElement('tr');
+  const bottomTd = document.createElement('td');
+  bottomTd.colSpan = MAPPING_CONFIG.length;
+  bottomTd.style.padding = '0';
+  bottomTd.style.border = 'none';
+  bottomTd.style.height = `${(total - end) * rowHeight}px`;
+  bottomTr.appendChild(bottomTd);
+  fragment.appendChild(bottomTr);
+
+  tableBodyEl.innerHTML = '';
+  tableBodyEl.appendChild(fragment);
 }
 
 // Hàm hỗ trợ lọc dữ liệu và chuyển đổi timestamp
