@@ -94,6 +94,111 @@ let prevContainerEl = null;
 const BUFFER_ROWS = 8;
 const RENDER_DEBOUNCE_MS = 180;
 const MAX_CHART_POINTS = 1000;
+// Smoothing window (simple moving average). Adjust to taste.
+const SMOOTHING_WINDOW = 60;
+
+// Simple moving average helper. Returns an array the same length as `arr` where
+// each value is the average of up to `windowSize` recent numeric values.
+function movingAverage(arr, windowSize) {
+  if (!Array.isArray(arr) || windowSize <= 1) return arr.slice();
+  return arr.map((_, i) => {
+    const start = Math.max(0, i - windowSize + 1);
+    const window = arr.slice(start, i + 1).filter(v => v !== null && v !== undefined && !isNaN(Number(v))).map(Number);
+    if (window.length === 0) return null;
+    return window.reduce((a, b) => a + b, 0) / window.length;
+  });
+}
+
+// Aggregate records by day (YYYY-MM-DD) and compute average for numeric fields
+function aggregateByDay(records) {
+  if (!Array.isArray(records) || records.length === 0) return [];
+
+  const dayMap = new Map();
+
+  records.forEach(rec => {
+    if (!rec || !rec.date_time) return;
+    const day = rec.date_time.split(' ')[0];
+    if (!dayMap.has(day)) {
+      dayMap.set(day, { sums: {}, counts: {}, device_id: rec.device_id || null });
+    }
+    const agg = dayMap.get(day);
+    MAPPING_CONFIG.forEach(({ key }) => {
+      if (key === 'date_time' || key === 'device_id') return;
+      const v = rec[key];
+      if (v === undefined || v === null || v === '-') return;
+      const num = Number(v);
+      if (!isNaN(num)) {
+        agg.sums[key] = (agg.sums[key] || 0) + num;
+        agg.counts[key] = (agg.counts[key] || 0) + 1;
+      }
+    });
+  });
+
+  const result = [];
+  // Preserve insertion order (records were passed in sorted by time)
+  for (const [day, agg] of dayMap.entries()) {
+    const obj = { date_time: day, device_id: agg.device_id };
+    MAPPING_CONFIG.forEach(({ key }) => {
+      if (key === 'date_time' || key === 'device_id') return;
+      const sum = agg.sums[key] || 0;
+      const cnt = agg.counts[key] || 0;
+      obj[key] = cnt > 0 ? (sum / cnt) : null;
+    });
+    result.push(obj);
+  }
+
+  return result;
+}
+
+  // Aggregate records into fixed-hour buckets (e.g., every 4 hours)
+  function aggregateByInterval(records, hours) {
+    if (!Array.isArray(records) || records.length === 0 || !hours || hours <= 0) return [];
+
+    const bucketMap = new Map();
+
+    records.forEach(rec => {
+      if (!rec || !rec.date_time) return;
+      const parts = rec.date_time.split(' ');
+      if (parts.length === 0) return;
+      const day = parts[0];
+      const time = parts[1] || '00:00';
+      const [hourStr] = time.split(':');
+      const hr = Number(hourStr);
+      if (isNaN(hr)) return;
+      const bucketStart = Math.floor(hr / hours) * hours;
+      const bucketLabel = `${day} ${String(bucketStart).padStart(2, '0')}:00`;
+
+      if (!bucketMap.has(bucketLabel)) {
+        bucketMap.set(bucketLabel, { sums: {}, counts: {}, device_id: rec.device_id || null });
+      }
+
+      const agg = bucketMap.get(bucketLabel);
+      MAPPING_CONFIG.forEach(({ key }) => {
+        if (key === 'date_time' || key === 'device_id') return;
+        const v = rec[key];
+        if (v === undefined || v === null || v === '-') return;
+        const num = Number(v);
+        if (!isNaN(num)) {
+          agg.sums[key] = (agg.sums[key] || 0) + num;
+          agg.counts[key] = (agg.counts[key] || 0) + 1;
+        }
+      });
+    });
+
+    const result = [];
+    for (const [label, agg] of bucketMap.entries()) {
+      const obj = { date_time: label, device_id: agg.device_id };
+      MAPPING_CONFIG.forEach(({ key }) => {
+        if (key === 'date_time' || key === 'device_id') return;
+        const sum = agg.sums[key] || 0;
+        const cnt = agg.counts[key] || 0;
+        obj[key] = cnt > 0 ? (sum / cnt) : null;
+      });
+      result.push(obj);
+    }
+
+    return result;
+  }
 
 // Khởi tạo đọc dữ liệu Realtime
 const dbRef = ref(database, "devices");
@@ -195,7 +300,10 @@ function renderDeviceDetail(deviceId) {
   const processedHistoryRecords = historyKeys.map(key => processDataObj(historyData[key]));
 
   // 3. Render các Biểu đồ Line Chart riêng cho từng tham số
-  const chartHistoryRecords = getChartWindowRecords(processedHistoryRecords).slice(0, MAX_CHART_POINTS);
+  // Aggregate by day and then select the chart window
+    // Aggregate by 4-hour intervals and then select the chart window
+    const intervalRecords = aggregateByInterval(processedHistoryRecords, 4);
+    const chartHistoryRecords = getChartWindowRecords(intervalRecords).slice(0, MAX_CHART_POINTS);
   renderLineCharts(chartHistoryRecords, deviceId);
 
   // 4. Render Bảng Lịch sử
@@ -254,6 +362,9 @@ function renderLineCharts(historyRecords, deviceId) {
     const canvas = card.querySelector("canvas");
     const ctx = canvas.getContext("2d");
 
+    const rawData = chartDataRecords.map(item => item[config.key] !== undefined ? item[config.key] : null);
+    const smoothedData = movingAverage(rawData, SMOOTHING_WINDOW);
+
     if (!chartInstances[index]) {
       const chart = new Chart(ctx, {
         type: 'line',
@@ -261,7 +372,7 @@ function renderLineCharts(historyRecords, deviceId) {
           labels,
           datasets: [{
             label: config.label,
-            data: chartDataRecords.map(item => item[config.key] !== undefined ? item[config.key] : null),
+            data: smoothedData,
             borderColor: config.color,
             backgroundColor: config.color,
             tension: 0.28,
@@ -304,7 +415,7 @@ function renderLineCharts(historyRecords, deviceId) {
       const chart = chartInstances[index];
       chart.data.labels = labels;
       chart.data.datasets[0].label = config.label;
-      chart.data.datasets[0].data = chartDataRecords.map(item => item[config.key] !== undefined ? item[config.key] : null);
+      chart.data.datasets[0].data = smoothedData;
       chart.data.datasets[0].borderColor = config.color;
       chart.data.datasets[0].backgroundColor = config.color;
       chart.update('none');
