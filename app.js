@@ -302,7 +302,7 @@ function renderDeviceDetail(deviceId) {
   // 3. Render các Biểu đồ Line Chart riêng cho từng tham số
   // Aggregate by day and then select the chart window
     // Aggregate by 4-hour intervals and then select the chart window
-    const intervalRecords = aggregateByInterval(processedHistoryRecords, 4);
+    const intervalRecords = aggregateByInterval(processedHistoryRecords, 4); //Thêm aggregateByInterval(records, hours) để tính trung bình cho các bucket 4 giờ.
     const chartHistoryRecords = getChartWindowRecords(intervalRecords).slice(0, MAX_CHART_POINTS);
   renderLineCharts(chartHistoryRecords, deviceId);
 
